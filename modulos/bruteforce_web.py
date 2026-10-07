@@ -53,6 +53,7 @@ class WebBruteForcer:
 
     def run(self):
         """Inicia el pool de hilos y orquesta el ataque."""
+        raise NotImplementedError("Fuerza bruta web sigue siendo una plantilla sin implementar.")
         threads = []
         for _ in range(self.max_threads):
             t = threading.Thread(target=self._worker)

@@ -8,3 +8,7 @@ python-nmap>=0.7.1
 # --- Dependencias Fase II ---
 requests>=2.31.0
 pysmb>=1.2.9.1
+
+# OSINT importa googlesearch; su distribución oficial es googlesearch-python.
+googlesearch-python==1.3.0
+jsonschema>=4.25.0,<5
