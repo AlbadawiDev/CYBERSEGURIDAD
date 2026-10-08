@@ -20,7 +20,10 @@ def scan_ports_dispatcher(target: str, ports: str) -> Dict[str, Any]:
 
     try:
         # Procesar la cadena de puertos
-        puertos_lista = [int(p.strip()) for p in ports.split(",") if p.strip().isdigit()]
+        tokens = [p.strip() for p in ports.split(",")]
+        if not tokens or any(not p.isdigit() or not 1 <= int(p) <= 65535 for p in tokens):
+            raise ValueError("Indique puertos TCP enteros entre 1 y 65535 separados por comas.")
+        puertos_lista = list(dict.fromkeys(int(p) for p in tokens))
         resultados_puertos = []
         
         print(f"\n  [G4] Iniciando escaneo real de puertos por sockets en: {target}")
@@ -28,11 +31,9 @@ def scan_ports_dispatcher(target: str, ports: str) -> Dict[str, Any]:
         # LÓGICA REAL DE ESCANEO POR SOCKETS
         for puerto in puertos_lista:
             # Crear socket TCP
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(1.0)  # Tiempo de espera seguro
-            
-            # Intentar conexión
-            conexion_codigo = s.connect_ex((target, puerto))
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1.0)  # Tiempo de espera seguro
+                conexion_codigo = s.connect_ex((target, puerto))
             
             # 0 significa que la conexión fue exitosa (Puerto Abierto)
             estado = "abierto" if conexion_codigo == 0 else "cerrado"
@@ -43,8 +44,6 @@ def scan_ports_dispatcher(target: str, ports: str) -> Dict[str, Any]:
                 "protocolo": "TCP"
             })
             
-            # Cerrar el flujo del socket
-            s.close()
 
         # Guardamos las estadísticas reales dentro del molde solicitado
         resultado["data"] = {

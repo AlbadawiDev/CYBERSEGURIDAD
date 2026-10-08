@@ -2,25 +2,47 @@ import os
 import re
 import argparse
 import sys
+from pathlib import Path
 
-try:
-    import chromadb
-except ImportError:
-    print("Error: No se encontró ChromaDB. Instálalo ejecutando: pip install chromadb")
-    exit(1)
+# Importar el módulo no crea bases de datos ni descarga modelos.
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = Path(os.environ.get("KNOWLEDGE_DB_PATH", str(BASE_DIR / "chroma_db")))
+DOCS_PATH = Path(os.environ.get("KNOWLEDGE_DOCS_PATH", str(BASE_DIR / "docs")))
+client = None
 
-# Inicializar el cliente de ChromaDB (Persistente para guardar en disco)
-DB_PATH = "/home/cero/MEGA/VS_CODE_WORKSPACE/CYBERSEGURIDAD/chroma_db"
-DOCS_PATH = "/home/cero/MEGA/VS_CODE_WORKSPACE/CYBERSEGURIDAD/docs"
-client = chromadb.PersistentClient(path=DB_PATH)
+
+def get_client():
+    global client
+    if client is None:
+        try:
+            import chromadb
+        except ImportError as exc:
+            raise RuntimeError("Instale la dependencia opcional: pip install chromadb") from exc
+        client = chromadb.PersistentClient(path=str(DB_PATH))
+    return client
+
+
+def markdown_records(topic, content):
+    """Extrae sólo secciones ## con contenido, incluso al inicio del archivo."""
+    sections = re.split(r"^## +", content, flags=re.MULTILINE)[1:]
+    records = []
+    for section in sections:
+        title, _, body = section.partition("\n")
+        if title.strip() and body.strip():
+            records.append((title.strip(), body.strip()))
+    return records
 
 def get_collection(topic: str):
     """Obtiene o crea una colección basada en el nombre del tema."""
-    return client.get_or_create_collection(name=f"{topic}_errors")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", topic):
+        raise ValueError("El tema sólo permite letras, números, guion y guion bajo.")
+    return get_client().get_or_create_collection(name=f"{topic}_errors")
 
 def process_markdown_and_populate(topic: str):
     """Lee un archivo .md, extrae errores y soluciones, y los inserta en su colección."""
-    file_path = os.path.join(DOCS_PATH, f"{topic}.md")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", topic):
+        raise ValueError("Tema inválido.")
+    file_path = DOCS_PATH / f"{topic}.md"
     if not os.path.exists(file_path):
         print(f"Archivo no encontrado: {file_path}")
         return
@@ -28,31 +50,20 @@ def process_markdown_and_populate(topic: str):
     with open(file_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # Separar por los encabezados de nivel 2 (##)
-    sections = re.split(r'\n## ', content)
-    
-    # La primera sección es la introducción, la ignoramos
-    if len(sections) > 1:
-        sections = sections[1:]
-
     documents = []
     metadatas = []
     ids = []
 
-    for i, section in enumerate(sections):
-        # La primera línea contiene el título del error
-        lines = section.split('\n', 1)
-        title = lines[0].strip()
-        body = lines[1].strip() if len(lines) > 1 else ""
+    for i, (title, body) in enumerate(markdown_records(topic, content)):
         
         # Preparamos los registros
         documents.append(body)
         metadatas.append({"title": title})
         ids.append(f"{topic}_error_{i+1}")
 
-    collection = get_collection(topic)
     # Insertar en ChromaDB (upsert inserta o actualiza si el ID ya existe)
     if documents:
+        collection = get_collection(topic)
         collection.upsert(
             documents=documents,
             metadatas=metadatas,
@@ -62,14 +73,17 @@ def process_markdown_and_populate(topic: str):
 
 def query_error(topic: str, query_text: str, n_results: int = 2, threshold: float = 1.2):
     """Realiza una búsqueda semántica en la base de datos de errores."""
+    if n_results <= 0:
+        raise ValueError("n_results debe ser positivo.")
     collection = get_collection(topic)
-    if collection.count() == 0:
+    count = collection.count()
+    if count == 0:
         print(f"⚠️ La colección '{topic}' está vacía o el archivo .md no existe.")
         return
         
     results = collection.query(
         query_texts=[query_text],
-        n_results=n_results
+        n_results=min(n_results, count)
     )
     
     print(f"🔍 Resultados para la búsqueda en '{topic}': '{query_text}'\n" + "="*60)

@@ -4,6 +4,7 @@ import sys
 import json
 import os
 import traceback
+from datetime import datetime, timezone
 
 try:
     from jsonschema import validate
@@ -63,12 +64,12 @@ def validar_resultado(resultado):
     Verifica si el diccionario retornado por un modulo cumple con el esquema oficial.
     """
     if resultado is None:
-        return
+        return False
 
     if not HAS_JSONSCHEMA:
         print("  [!] Aviso: Libreria 'jsonschema' no encontrada. Omitiendo validacion estricta.")
         print("      Instale con: pip install jsonschema")
-        return
+        return False
 
     schema_path = os.path.join(os.path.dirname(__file__), "docs/schema_resultados.json")
     try:
@@ -76,9 +77,11 @@ def validar_resultado(resultado):
             schema = json.load(f)
         validate(instance=resultado, schema=schema)
         print(f"  [OK] Validacion de esquema exitosa para: {resultado.get('modulo')} (Estudiante: {resultado.get('estudiante')})")
+        return True
     except Exception as e:
         print(f"  [X] ERROR DE CONTRATO en modulo '{resultado.get('modulo', 'Desconocido')}':")
         print(f"      Detalle: {str(e)}")
+        return False
 
 def ejecutar_modulo(func, *args, **kwargs):
     """
@@ -87,7 +90,8 @@ def ejecutar_modulo(func, *args, **kwargs):
     try:
         resultado = func(*args, **kwargs)
         if resultado:
-            validar_resultado(resultado)
+            if not validar_resultado(resultado):
+                raise ValueError("El módulo devolvió un resultado que no cumple el contrato JSON.")
             return resultado
     except NotImplementedError as e:
         print(f"\n[!] Característica en desarrollo: {e}")
@@ -99,8 +103,10 @@ def ejecutar_modulo(func, *args, **kwargs):
         modulo_nombre = func.__module__.split('.')[-1].upper() if hasattr(func, '__module__') else "Desconocido"
         return {
             "modulo": modulo_nombre,
+            "grupo": 0,
             "estudiante": "Fallo en ejecución",
             "target": args[0] if args else "Desconocido",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "status": "error",
             "error_message": tb_str,
             "data": {"funcion_fallida": func.__name__}
@@ -115,19 +121,8 @@ def guardar_historial(resultados):
         return
 
     archivo_historial = os.path.join(os.path.dirname(os.path.abspath(__file__)), "historial_auditoria.json")
-    historial = []
-
-    if os.path.isfile(archivo_historial):
-        try:
-            with open(archivo_historial, "r", encoding="utf-8") as f:
-                historial = json.load(f)
-        except json.JSONDecodeError:
-            pass # Si el archivo está corrupto o vacío, iniciamos de cero
-
-    historial.extend(resultados)
-
-    with open(archivo_historial, "w", encoding="utf-8") as f:
-        json.dump(historial, f, indent=4)
+    from history import append_history
+    append_history(archivo_historial, resultados)
     print(f"\n[*] Historial guardado exitosamente. Se agregaron {len(resultados)} registro(s) a 'historial_auditoria.json'.")
 
 def main():
@@ -226,10 +221,15 @@ def main():
         guardar_historial(resultados_totales)
     except AttributeError as e:
         print(f"\n[!] Error en la estructura de los módulos: {e}")
+        return 1
+
+    except (OSError, ValueError):
+        print("\n[!] No se pudo guardar el historial. El archivo existente se conserva; revise su formato y permisos.")
+        return 1
 
     except KeyboardInterrupt:
         print("\n[!] Auditoria interrumpida por el usuario.")
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
